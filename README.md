@@ -251,7 +251,7 @@ powershell -ExecutionPolicy Bypass -File .\nic_handler.ps1 -UserName "your_usern
 
 ## ライセンス
 
-[MIT License](LICENSE) - Copyright (c) 2026 [RUA-PROM](https://github.com/RUA-PROM)
+[MIT License](LICENSE) - Copyright (c) 2026 [RUA PROM](https://github.com/RUA-PROM)
 
 商用利用・改変・再配布は自由。著作権表示と本ライセンス文の保持のみが条件。
 無保証であることを理解した上で利用すること。
