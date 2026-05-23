@@ -34,7 +34,14 @@ $policy = New-PriorityPolicy `
     -PreferredMetric        $PreferredMetric `
     -DemotedMetric          $DemotedMetric
 
-Invoke-NicPriorityHandler `
-    -TriggeringUser $UserName `
-    -Policy         $policy `
-    -LogFile        $LogFile
+# ローテーション設定は config に書いてあれば渡す。
+# 未定義の場合は Invoke-NicPriorityHandler の既定値（1MB / 3 世代）が使われる。
+$handlerArgs = @{
+    TriggeringUser = $UserName
+    Policy         = $policy
+    LogFile        = $LogFile
+}
+if (Test-Path Variable:\MaxLogBytes)   { $handlerArgs.MaxLogBytes   = $MaxLogBytes }
+if (Test-Path Variable:\MaxLogBackups) { $handlerArgs.MaxLogBackups = $MaxLogBackups }
+
+Invoke-NicPriorityHandler @handlerArgs

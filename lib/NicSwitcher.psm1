@@ -214,15 +214,57 @@ function Set-InterfaceMetric {
     }
 }
 
+# Infrastructure: ログをローテーションする。
+#
+# .log → .log.1, .log.1 → .log.2, ..., .log.(N-1) → .log.N と番号を
+# 押し上げ、.log.N（最古）は破棄する。世代上限 N は MaxBackups で指定。
+# Path が存在しない場合は何もしない（冪等）。
+function Invoke-LogRotation {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][ValidateRange(1, 100)][int]$MaxBackups
+    )
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+
+    # 最古のバックアップ（.N）を削除
+    $oldest = "$Path.$MaxBackups"
+    if (Test-Path -LiteralPath $oldest) {
+        Remove-Item -LiteralPath $oldest -Force
+    }
+    # .N-1 → .N, .N-2 → .N-1, ..., .1 → .2 の順に押し上げ
+    for ($i = $MaxBackups - 1; $i -ge 1; $i--) {
+        $from = "$Path.$i"
+        $to   = "$Path.$($i + 1)"
+        if (Test-Path -LiteralPath $from) {
+            Move-Item -LiteralPath $from -Destination $to -Force
+        }
+    }
+    # 現在の .log を .log.1 に
+    Move-Item -LiteralPath $Path -Destination "$Path.1" -Force
+}
+
 # Infrastructure: UTF-8 でタイムスタンプ付きのログ行を追記する。
 # UTF-8 が重要 - Windows PowerShell の既定 ANSI コードページは
 # 日本語を文字化けさせる。
+# 書き込み前にファイルサイズが MaxBytes を超えていればローテーションする。
 function Write-NicLog {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][string]$Message
+        [Parameter(Mandatory)][string]$Message,
+        [int]$MaxBytes = 1MB,
+        [ValidateRange(1, 100)][int]$MaxBackups = 3
     )
+    if ((Test-Path -LiteralPath $Path) -and
+        ((Get-Item -LiteralPath $Path).Length -ge $MaxBytes)) {
+        try {
+            Invoke-LogRotation -Path $Path -MaxBackups $MaxBackups
+        } catch {
+            # ローテーション失敗時もログ書き込み自体は継続する。
+            # 監査ログ機構が完全に止まるよりはマシ。
+        }
+    }
     $line = "[{0}] {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message
     Add-Content -LiteralPath $Path -Value $line -Encoding UTF8
 }
@@ -250,13 +292,20 @@ function Invoke-NicPriorityHandler {
 
         # イベント直後のセッションテーブル安定化を待つ秒数。
         # テストでは 0 を渡して高速化する。
-        [int]$SettleSeconds = 2
+        [int]$SettleSeconds = 2,
+
+        # ログのローテーション設定。閾値を超えると .log.1, .log.2... に
+        # 押し上げて .log を新規開始する。
+        [int]$MaxLogBytes = 1MB,
+        [ValidateRange(1, 100)][int]$MaxLogBackups = 3
     )
 
-    Write-NicLog -Path $LogFile -Message "Triggered with UserName='$TriggeringUser'"
+    $logArgs = @{ MaxBytes = $MaxLogBytes; MaxBackups = $MaxLogBackups }
+
+    Write-NicLog -Path $LogFile -Message "Triggered with UserName='$TriggeringUser'" @logArgs
 
     if (Test-SystemAccountName -Name $TriggeringUser) {
-        Write-NicLog -Path $LogFile -Message "Skipped (system or service account: '$TriggeringUser')"
+        Write-NicLog -Path $LogFile -Message "Skipped (system or service account: '$TriggeringUser')" @logArgs
         return
     }
 
@@ -270,13 +319,13 @@ function Invoke-NicPriorityHandler {
     Write-NicLog -Path $LogFile -Message (
         "Decision: {0} (PreferIndex={1}, DemoteIndex={2})" -f `
             $decision.Reason, $decision.PreferIndex, $decision.DemoteIndex
-    )
+    ) @logArgs
 
     Set-InterfaceMetric -Decision $decision
 
     Write-NicLog -Path $LogFile -Message (
         "Applied: interface (Index={0}) preferred" -f $decision.PreferIndex
-    )
+    ) @logArgs
 }
 
 
@@ -290,5 +339,6 @@ Export-ModuleMember -Function `
     Invoke-Quser, `
     Get-CurrentSessions, `
     Set-InterfaceMetric, `
+    Invoke-LogRotation, `
     Write-NicLog, `
     Invoke-NicPriorityHandler

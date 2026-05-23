@@ -526,6 +526,139 @@ Describe 'Feature: 監査ログを書き出す' {
 
 
 # ============================================================================
+# FEATURE: Infrastructure 層 - ログファイルのローテーション
+#
+# ログが無限に肥大化しないよう、書き込み時にサイズを見て .log → .log.1 →
+# .log.2 ... と世代を押し上げる。
+# ============================================================================
+
+Describe 'Feature: ログファイルのローテーション' {
+
+    Context 'Scenario: 既存ログを 1 世代押し上げる' {
+        It '.log を .log.1 にリネームする' {
+            # Given 既存ログファイル
+            $logPath = Join-Path $TestDrive 'rotate.log'
+            'old content' | Set-Content -LiteralPath $logPath -Encoding UTF8
+
+            # When  ローテーションすると
+            Invoke-LogRotation -Path $logPath -MaxBackups 3
+
+            # Then  元の .log は消え、.log.1 ができる
+            Test-Path -LiteralPath $logPath       | Should -BeFalse
+            Test-Path -LiteralPath "$logPath.1"   | Should -BeTrue
+            Get-Content -LiteralPath "$logPath.1" | Should -Be 'old content'
+        }
+    }
+
+    Context 'Scenario: 複数世代がある状態でローテーションする' {
+        It '番号がひとつずつ押し上げられる' {
+            # Given .log, .log.1, .log.2 がある状態
+            $logPath = Join-Path $TestDrive 'multi.log'
+            'newest' | Set-Content -LiteralPath $logPath        -Encoding UTF8
+            'gen1'   | Set-Content -LiteralPath "$logPath.1"    -Encoding UTF8
+            'gen2'   | Set-Content -LiteralPath "$logPath.2"    -Encoding UTF8
+
+            # When  ローテーションすると
+            Invoke-LogRotation -Path $logPath -MaxBackups 3
+
+            # Then  newest→.1, gen1→.2, gen2→.3 に押し上げられる
+            Get-Content -LiteralPath "$logPath.1" | Should -Be 'newest'
+            Get-Content -LiteralPath "$logPath.2" | Should -Be 'gen1'
+            Get-Content -LiteralPath "$logPath.3" | Should -Be 'gen2'
+            Test-Path -LiteralPath $logPath | Should -BeFalse
+        }
+    }
+
+    Context 'Scenario: 最大世代を超えるバックアップは破棄する' {
+        It '.log.N（最古）は削除される' {
+            # Given MaxBackups=2 で、すでに .log.1 と .log.2 が埋まっている
+            $logPath = Join-Path $TestDrive 'cap.log'
+            'newest' | Set-Content -LiteralPath $logPath     -Encoding UTF8
+            'gen1'   | Set-Content -LiteralPath "$logPath.1" -Encoding UTF8
+            'gen2'   | Set-Content -LiteralPath "$logPath.2" -Encoding UTF8  # 最古、削除対象
+
+            # When  MaxBackups=2 でローテーションすると
+            Invoke-LogRotation -Path $logPath -MaxBackups 2
+
+            # Then  gen2 は消え、newest→.1, gen1→.2 になる
+            Get-Content -LiteralPath "$logPath.1" | Should -Be 'newest'
+            Get-Content -LiteralPath "$logPath.2" | Should -Be 'gen1'
+            Test-Path -LiteralPath "$logPath.3" | Should -BeFalse
+        }
+    }
+
+    Context 'Scenario: 対象ファイルが存在しない' {
+        It '例外を投げず、何もしない（冪等）' {
+            # Given 存在しないログパス
+            $logPath = Join-Path $TestDrive 'absent.log'
+
+            # When  ローテーションを呼んでも
+            # Then  例外にならず、ファイルも作られない
+            { Invoke-LogRotation -Path $logPath -MaxBackups 3 } | Should -Not -Throw
+            Test-Path -LiteralPath $logPath | Should -BeFalse
+        }
+    }
+}
+
+
+# ============================================================================
+# FEATURE: Infrastructure 層 - Write-NicLog の自動ローテーション
+#
+# Write-NicLog はサイズ閾値を超えていれば書き込み前に自動ローテーションする。
+# 利用側がローテーション呼び出しを意識しなくて済むようにする。
+# ============================================================================
+
+Describe 'Feature: Write-NicLog の自動ローテーション' {
+
+    Context 'Scenario: サイズ閾値超過で自動ローテーションされる' {
+        It '旧 .log は .log.1 に退避され、新 .log は新メッセージから始まる' {
+            # Given 100 バイト超の既存ログ
+            $logPath = Join-Path $TestDrive 'autorot.log'
+            ('x' * 200) | Set-Content -LiteralPath $logPath -Encoding UTF8 -NoNewline
+
+            # When  閾値 100 バイトを指定して新メッセージを書くと
+            Write-NicLog -Path $logPath -Message 'after rotation' -MaxBytes 100 -MaxBackups 2
+
+            # Then  旧ログは .log.1 に退避、新 .log は新メッセージ 1 行のみ
+            Test-Path -LiteralPath "$logPath.1" | Should -BeTrue
+            $lines = @(Get-Content -LiteralPath $logPath -Encoding UTF8)
+            $lines.Count | Should -Be 1
+            $lines[0] | Should -Match 'after rotation'
+        }
+    }
+
+    Context 'Scenario: 閾値未満ならローテーションしない' {
+        It '.log.1 は作られず、追記だけが行われる' {
+            # Given 小さなログ
+            $logPath = Join-Path $TestDrive 'small.log'
+            Write-NicLog -Path $logPath -Message 'tiny'
+
+            # When  続けて書いても閾値未満なら
+            Write-NicLog -Path $logPath -Message 'still tiny'
+
+            # Then  .log.1 は作られず、2 行が同じファイルに残る
+            Test-Path -LiteralPath "$logPath.1" | Should -BeFalse
+            @(Get-Content -LiteralPath $logPath -Encoding UTF8).Count | Should -Be 2
+        }
+    }
+
+    Context 'Scenario: ローテーション中に例外が起きてもログ書き込みは続く' {
+        It 'ローテーション失敗時も追記は成功する' {
+            # Given 閾値超過のログと、ローテーションが失敗するモック
+            $logPath = Join-Path $TestDrive 'fail.log'
+            ('x' * 200) | Set-Content -LiteralPath $logPath -Encoding UTF8 -NoNewline
+            Mock -ModuleName NicSwitcher Invoke-LogRotation { throw 'simulated lock' }
+
+            # When  書き込みを呼ぶと
+            # Then  例外は伝播せず、追記は成功する
+            { Write-NicLog -Path $logPath -Message 'survived' -MaxBytes 100 } | Should -Not -Throw
+            (Get-Content -LiteralPath $logPath -Encoding UTF8) -join "`n" | Should -Match 'survived'
+        }
+    }
+}
+
+
+# ============================================================================
 # FEATURE: Application 層 - ユースケースのエンドツーエンドな組み立て
 #
 # Invoke-NicPriorityHandler は各層を組み立てる。Infrastructure 境界

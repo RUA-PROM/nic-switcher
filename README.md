@@ -89,6 +89,8 @@ notepad config.ps1
 | `$PreferredMetric` / `$DemotedMetric` | メトリック値（小さいほど優先） |
 | `$TaskName` | タスクスケジューラ上のタスク名 |
 | `$LogFile` | ログファイルの出力先 |
+| `$MaxLogBytes` | ローテーション閾値（既定 `1MB`）。これを超えると自動退避 |
+| `$MaxLogBackups` | 保持する世代数（既定 `3`）。古い世代は破棄される |
 
 `InterfaceIndex` は次で確認できる：
 
@@ -153,7 +155,7 @@ Install-Module -Name Pester -MinimumVersion 5.0 -Scope CurrentUser -Force -SkipP
 
 Pester の `Describe` / `Context` / `It` をそれぞれ BDD の **Feature / Scenario / 振る舞いの仕様** に対応させている。各 `It` の中にはインラインで Given / When / Then をコメントとして書き、自然言語のシナリオと実行ステップが対応するようにしてある。
 
-#### 単体テストの Feature 一覧（8 features / 29 scenarios）
+#### 単体テストの Feature 一覧（10 features / 36 scenarios）
 
 | Feature | シナリオ数 |
 |---------|----------|
@@ -164,6 +166,8 @@ Pester の `Describe` / `Context` / `It` をそれぞれ BDD の **Feature / Sce
 | Get-CurrentSessions の境界ふるまい | 2 |
 | Decision をネットワークスタックに適用する | 2 (+1 `-WhatIf`) |
 | 監査ログを書き出す | 3 |
+| ログファイルのローテーション | 4 |
+| Write-NicLog の自動ローテーション | 3 |
 | ログオンイベントをエンドツーエンドで処理する | 3 |
 
 #### 結合テストの Feature 一覧（4 features / 7 scenarios）
@@ -179,8 +183,8 @@ Pester の `Describe` / `Context` / `It` をそれぞれ BDD の **Feature / Sce
 
 | 指標 | 値 |
 |------|-----|
-| 単体 + 結合 合計テスト数（TestCases 展開後） | **49** |
-| `lib/NicSwitcher.psm1` 命令カバレッジ | **100%** (78 / 78 命令) |
+| 単体 + 結合 合計テスト数（TestCases 展開後） | **56** |
+| `lib/NicSwitcher.psm1` 命令カバレッジ | **100%** (100 / 100 命令) |
 
 カバレッジレポートは `tests/coverage.xml` に JaCoCo 形式で出力される（SonarQube・Coverage Gutters 等で読める）。
 
@@ -242,9 +246,25 @@ powershell -ExecutionPolicy Bypass -File .\nic_handler.ps1 -UserName "your_usern
 | 不正な Policy 構築 | `New-PriorityPolicy` が同一 NIC 指定 / メトリック逆転を構築時に拒否 |
 | 予期せぬ副作用 | `Set-InterfaceMetric` は `SupportsShouldProcess`。`-WhatIf` でドライランできる |
 
+### ログローテーション
+
+`Write-NicLog` は書き込み前にファイルサイズを見て、自動的にローテーションする：
+
+```
+nic_handler.log         ← 現役（常に新しい書き込みが行われる）
+nic_handler.log.1       ← 1 世代前
+nic_handler.log.2       ← 2 世代前
+nic_handler.log.3       ← 3 世代前（既定では最古）
+```
+
+閾値（`$MaxLogBytes`）を超えると `.log` を `.log.1` にリネームし、
+連鎖的に番号が押し上げられ、`.log.$MaxLogBackups` より古いものは破棄される。
+別途タスクスケジューラを組む必要はなく、運用負荷ゼロで肥大化が抑えられる。
+
+ローテーション後のファイル（`*.log.*`）も `.gitignore` で除外済み。
+
 ### 推奨運用
 
-- `nic_handler.log` を週次でローテーション
 - `config.ps1` をパスワードマネージャや暗号化ボールトに別途バックアップ
 - `lib/NicSwitcher.psm1` 変更時は `tests/Run-Tests.ps1` を必ず実行してから `install.ps1` し直す
 - `install.ps1` の生成 XML を `schtasks /Query /TN <TaskName> /XML` で定期的に確認

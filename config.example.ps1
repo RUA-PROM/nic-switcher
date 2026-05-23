@@ -41,3 +41,10 @@ $TaskName = 'SwitchNIC_Unified'
 # 既定ではスクリプトと同じディレクトリに出力する。プロジェクトと
 # 一緒に移動でき、.gitignore で除外される。
 $LogFile = Join-Path $PSScriptRoot 'nic_handler.log'
+
+# ログローテーション設定。
+# 書き込み前にファイルが $MaxLogBytes を超えていれば、.log を .log.1 に
+# 押し上げ、新しい .log を開始する。世代は .log.$MaxLogBackups まで保持し、
+# それ以降は破棄。これにより 1 ファイルが無限肥大化することはなくなる。
+$MaxLogBytes   = 1MB
+$MaxLogBackups = 3
