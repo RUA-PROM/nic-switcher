@@ -1,0 +1,17 @@
+# ローカル設定（マシンごとの個別値）
+config.ps1
+
+# 実行時生成のログ
+*.log
+
+# テストのカバレッジレポート
+tests/coverage.xml
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# エディタ
+.vscode/
+.idea/
+*.swp
