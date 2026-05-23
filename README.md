@@ -66,6 +66,7 @@ Windows タスクスケジューラに登録した **イベントトリガー** 
 | `tests/unit/*.Tests.ps1` | 単体テスト（外部依存はモック） | ✅ |
 | `tests/integration/*.Tests.ps1` | 結合テスト（実 quser / 実ファイル I/O / `-WhatIf`） | ✅ |
 | `tests/Run-Tests.ps1` | テストランナー（カバレッジ計測込み） | ✅ |
+| `tests/verify-on-real-machine.ps1` | 実機エンドツーエンド検証（管理者権限が必要） | ✅ |
 | `tests/coverage.xml` | JaCoCo 形式のカバレッジレポート | ❌ gitignore |
 | `nic_handler.log` | 実行履歴（UTF-8） | ❌ gitignore |
 
@@ -152,37 +153,58 @@ Install-Module -Name Pester -MinimumVersion 5.0 -Scope CurrentUser -Force -SkipP
 
 Pester の `Describe` / `Context` / `It` をそれぞれ BDD の **Feature / Scenario / 振る舞いの仕様** に対応させている。各 `It` の中にはインラインで Given / When / Then をコメントとして書き、自然言語のシナリオと実行ステップが対応するようにしてある。
 
-#### 単体テストの Feature 一覧
+#### 単体テストの Feature 一覧（8 features / 29 scenarios）
 
 | Feature | シナリオ数 |
 |---------|----------|
-| System accounts are ignored | 5 |
-| quser output is translated into Sessions | 6 |
-| PriorityPolicy enforces configuration safety | 3 |
-| Resolving the priority decision | 5 |
-| Applying the decision to the network stack | 2 |
-| Writing the audit log | 3 |
-| Handling a logon event end-to-end | 3 |
+| システムアカウントを NIC 切り替えの対象から除外する | 5 |
+| quser 出力を Session オブジェクトに変換する | 6 |
+| PriorityPolicy が設定の安全性を強制する | 3 |
+| 現在のセッションから優先度判定を導出する | 5 |
+| Get-CurrentSessions の境界ふるまい | 2 |
+| Decision をネットワークスタックに適用する | 2 (+1 `-WhatIf`) |
+| 監査ログを書き出す | 3 |
+| ログオンイベントをエンドツーエンドで処理する | 3 |
 
-#### 結合テストの Feature 一覧
+#### 結合テストの Feature 一覧（4 features / 7 scenarios）
 
 | Feature | シナリオ数 |
 |---------|----------|
 | 実 quser.exe からの Session 取得 | 2 |
 | 実ディスクへの UTF-8 ログ書き込み | 2 |
 | -WhatIf を通したネットワーク変更の安全性 | 1 |
-| ハンドラのエンドツーエンド実行 | 3 |
+| ハンドラのエンドツーエンド実行（ネットワークのみモック） | 2 (+1 config example) |
 
 ### カバレッジ
 
 | 指標 | 値 |
 |------|-----|
-| 単体 + 結合 合計テスト数 | 47 |
-| `lib/NicSwitcher.psm1` 命令カバレッジ | **98.7%** (76 / 77 命令) |
+| 単体 + 結合 合計テスト数（TestCases 展開後） | **49** |
+| `lib/NicSwitcher.psm1` 命令カバレッジ | **100%** (78 / 78 命令) |
 
 カバレッジレポートは `tests/coverage.xml` に JaCoCo 形式で出力される（SonarQube・Coverage Gutters 等で読める）。
 
-すべてのテストは `Set-NetIPInterface` のモック化／`-WhatIf` 隔離によって、**管理者権限なし・ネットワークに影響なし** で完結する。
+すべての自動テストは `Set-NetIPInterface` のモック化／`-WhatIf` 隔離によって、**管理者権限なし・ネットワークに影響なし** で完結する。
+
+### 実機での最終確認
+
+自動テストはあくまで `Set-NetIPInterface` をモックしているため、「実機で本当にメトリックが書き換わる」ことは別途確認が必要。`tests/verify-on-real-machine.ps1` がその一連の手順を自動化する。
+
+```powershell
+# 管理者 PowerShell
+.\tests\verify-on-real-machine.ps1
+```
+
+このスクリプトは以下を順に実行する：
+
+1. 検証前の `Get-NetIPInterface` を表示
+2. `install.ps1` を再実行して、最新コードのパスでタスク XML を再生成
+3. 現在ログオンしている優先ユーザーで `nic_handler.ps1` を実呼び出し
+   （`Set-NetIPInterface` まで実際に到達する）
+4. 検証後の `Get-NetIPInterface` を表示し、メトリックが期待値になっていることを目視確認
+5. 監査ログの末尾を表示
+
+期待結果は `config.ps1` の値から自動で表示される。
 
 ## 動作確認
 

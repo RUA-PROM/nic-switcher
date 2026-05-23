@@ -15,3 +15,7 @@ desktop.ini
 .vscode/
 .idea/
 *.swp
+
+# vsCodeの設定ファイル
+.vscode/*
+*.code-workspace
