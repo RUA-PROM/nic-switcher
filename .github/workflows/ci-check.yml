@@ -1,10 +1,6 @@
 name: ci-check
 
 on:
-  push:
-    branches:
-      - main
-      - feature/**
   pull_request:
 
 jobs:
