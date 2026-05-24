@@ -1,0 +1,70 @@
+name: ci-check
+
+on:
+  pull_request:
+
+jobs:
+  ci-check:
+    runs-on: windows-latest
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: PowerShell モジュールのインストール
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name Pester -MinimumVersion 5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: セキュリティ診断
+        shell: pwsh
+        run: |
+          ./tests/Invoke-SecurityCheck.ps1
+
+      - name: フォーマットチェック
+        shell: pwsh
+        run: |
+          ./tests/Invoke-FormatCheck.ps1
+
+      - name: テスト実行（カバレッジ 100% 目標）
+        shell: pwsh
+        run: |
+          ./tests/Run-Tests.ps1 -Suite All -Output Detailed -CoveragePercentTarget 100
+
+      - name: JaCoCo カバレッジ 100% 検証
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $coveragePath = Join-Path $PWD 'tests/coverage.xml'
+
+          if (-not (Test-Path -LiteralPath $coveragePath)) {
+            throw "カバレッジレポートが見つかりません: $coveragePath"
+          }
+
+          [xml]$coverage = Get-Content -LiteralPath $coveragePath -Raw -Encoding UTF8
+
+          $counter = $coverage.report.counter | Where-Object { $_.type -eq 'INSTRUCTION' } | Select-Object -First 1
+          if (-not $counter) {
+            throw 'JaCoCo レポートに INSTRUCTION カウンターが見つかりません。'
+          }
+
+          $covered = [int]$counter.covered
+          $missed = [int]$counter.missed
+          $total = $covered + $missed
+
+          if ($total -le 0) {
+            throw 'カバレッジレポートが不正です: 命令数合計が 0 です。'
+          }
+
+          $percent = [math]::Round(($covered / $total) * 100, 2)
+          Write-Host "カバレッジ: $covered/$total ($percent%)"
+
+          if ($missed -ne 0 -or $percent -lt 100) {
+            throw "カバレッジ要件を満たしていません。必要: 100%、実際: $percent%"
+          }
+
+      - name: カバレッジレポートをアップロード
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: tests/coverage.xml

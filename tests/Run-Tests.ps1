@@ -16,6 +16,9 @@ param(
     [ValidateSet('Normal','Detailed','Diagnostic')]
     [string]$Output = 'Detailed',
 
+    [ValidateRange(0, 100)]
+    [int]$CoveragePercentTarget = 90,
+
     [switch]$NoCoverage
 )
 
@@ -58,7 +61,7 @@ if (-not $NoCoverage) {
     $config.CodeCoverage.Path           = $modulePath
     $config.CodeCoverage.OutputFormat   = 'JaCoCo'
     $config.CodeCoverage.OutputPath     = (Join-Path $PSScriptRoot 'coverage.xml')
-    $config.CodeCoverage.CoveragePercentTarget = 90
+    $config.CodeCoverage.CoveragePercentTarget = $CoveragePercentTarget
 }
 
 $result = Invoke-Pester -Configuration $config
@@ -74,7 +77,7 @@ if (-not $NoCoverage -and $result.CodeCoverage) {
     Write-Host ""
     Write-Host "=== コードカバレッジ ==============================================" -ForegroundColor Cyan
     Write-Host ("実行された命令: {0} / {1}" -f $covered, $total)
-    Write-Host ("カバレッジ率  : {0}%" -f $rate) -ForegroundColor $(if ($rate -ge 90) { 'Green' } elseif ($rate -ge 75) { 'Yellow' } else { 'Red' })
+    Write-Host ("カバレッジ率  : {0}%" -f $rate) -ForegroundColor $(if ($rate -ge $CoveragePercentTarget) { 'Green' } elseif ($rate -ge 75) { 'Yellow' } else { 'Red' })
     Write-Host ("レポート      : {0}" -f $config.CodeCoverage.OutputPath.Value)
 
     if ($cov.CommandsMissedCount -gt 0) {

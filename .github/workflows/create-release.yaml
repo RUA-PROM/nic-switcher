@@ -1,0 +1,31 @@
+# main へのマージ時に GitHub Release を自動作成する
+# タグは日時ベース（vYYYYMMDD.HHMMSS JST）、リリースノートは自動生成
+name: Release 作成
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: "release"
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release 作成
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリのチェックアウト
+        uses: actions/checkout@v4
+
+      - name: タグ作成と Release 公開
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v$(TZ=Asia/Tokyo date '+%Y%m%d.%H%M%S')"
+          git tag "$TAG"
+          git push origin "$TAG"
+          gh release create "$TAG" --generate-notes
