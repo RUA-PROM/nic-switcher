@@ -1,0 +1,97 @@
+name: ci-check
+
+on:
+  push:
+    branches:
+      - main
+      - feature/**
+  pull_request:
+
+jobs:
+  ci-check:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install PowerShell Modules
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name Pester -MinimumVersion 5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+          Install-Module -Name PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: Format Check (Invoke-Formatter)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module PSScriptAnalyzer -Force
+
+          $files = Get-ChildItem -Path . -Recurse -File -Include *.ps1,*.psm1 |
+            Where-Object { $_.FullName -notmatch '\\[.]git\\' }
+
+          if (-not $files) {
+            throw 'No PowerShell files found for format check.'
+          }
+
+          $notFormatted = @()
+          foreach ($file in $files) {
+            $original = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8
+            $formatted = Invoke-Formatter -ScriptDefinition $original
+
+            $normalizedOriginal = ($original -replace "`r`n", "`n").TrimEnd("`n")
+            $normalizedFormatted = ($formatted -replace "`r`n", "`n").TrimEnd("`n")
+
+            if ($normalizedOriginal -ne $normalizedFormatted) {
+              $notFormatted += $file.FullName
+            }
+          }
+
+          if ($notFormatted.Count -gt 0) {
+            Write-Host 'The following files are not properly formatted:' -ForegroundColor Red
+            $notFormatted | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+            throw 'Formatting check failed. Run Invoke-Formatter locally and commit the result.'
+          }
+
+      - name: Run Tests with 100% Coverage Target
+        shell: pwsh
+        run: |
+          ./tests/Run-Tests.ps1 -Suite All -Output Detailed -CoveragePercentTarget 100
+
+      - name: Verify JaCoCo Coverage is 100%
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $coveragePath = Join-Path $PWD 'tests/coverage.xml'
+
+          if (-not (Test-Path -LiteralPath $coveragePath)) {
+            throw "Coverage report not found: $coveragePath"
+          }
+
+          [xml]$coverage = Get-Content -LiteralPath $coveragePath -Raw -Encoding UTF8
+
+          $counter = $coverage.report.counter | Where-Object { $_.type -eq 'INSTRUCTION' } | Select-Object -First 1
+          if (-not $counter) {
+            throw 'INSTRUCTION counter not found in JaCoCo report.'
+          }
+
+          $covered = [int]$counter.covered
+          $missed = [int]$counter.missed
+          $total = $covered + $missed
+
+          if ($total -le 0) {
+            throw 'Coverage report is invalid: total instruction count is zero.'
+          }
+
+          $percent = [math]::Round(($covered / $total) * 100, 2)
+          Write-Host "Coverage: $covered/$total ($percent%)"
+
+          if ($missed -ne 0 -or $percent -lt 100) {
+            throw "Coverage requirement not met. 100% required, actual: $percent%"
+          }
+
+      - name: Upload Coverage Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: tests/coverage.xml
